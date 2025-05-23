@@ -9,11 +9,16 @@ from frappe.query_builder.functions import Sum
 from frappe.utils import cstr, flt, get_link_to_form
 
 import erpnext
+from erpnext.accounts.doctype.repost_accounting_ledger.repost_accounting_ledger import (
+	validate_docs_for_voucher_types,
+)
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import get_bank_cash_account
 from erpnext.accounts.general_ledger import make_gl_entries
 from erpnext.controllers.accounts_controller import AccountsController
 
+import hrms
 from hrms.hr.utils import set_employee_name, share_doc_with_approver, validate_active_employee
+from hrms.mixins.pwa_notifications import PWANotificationsMixin
 
 
 class InvalidExpenseApproverError(frappe.ValidationError):
@@ -24,11 +29,18 @@ class ExpenseApproverIdentityError(frappe.ValidationError):
 	pass
 
 
-class ExpenseClaim(AccountsController):
+class MismatchError(frappe.ValidationError):
+	pass
+
+
+class ExpenseClaim(AccountsController, PWANotificationsMixin):
 	def onload(self):
 		self.get("__onload").make_payment_via_journal_entry = frappe.db.get_single_value(
 			"Accounts Settings", "make_payment_via_journal_entry"
 		)
+
+	def after_insert(self):
+		self.notify_approver()
 
 	def validate(self):
 		validate_active_employee(self.employee)
@@ -37,10 +49,9 @@ class ExpenseClaim(AccountsController):
 		self.calculate_total_amount()
 		self.validate_advances()
 		self.set_expense_account(validate=True)
-		self.set_payable_account()
-		self.set_cost_center()
 		self.calculate_taxes()
 		self.set_status()
+		self.validate_company_and_department()
 		if self.task and not self.project:
 			self.project = frappe.db.get_value("Task", self.task, "project")
 
@@ -49,49 +60,58 @@ class ExpenseClaim(AccountsController):
 
 		precision = self.precision("grand_total")
 
-		if (
-			# set as paid
-			self.is_paid
-			or (
-				flt(self.total_sanctioned_amount > 0)
-				and (
-					# grand total is reimbursed
-					(
-						self.docstatus == 1
-						and flt(self.grand_total, precision) == flt(self.total_amount_reimbursed, precision)
+		if self.docstatus == 1:
+			if self.approval_status == "Approved":
+				if (
+					# set as paid
+					self.is_paid
+					or (
+						flt(self.total_sanctioned_amount) > 0
+						and (
+							# grand total is reimbursed
+							(flt(self.grand_total, precision) == flt(self.total_amount_reimbursed, precision))
+							# grand total (to be paid) is 0 since linked advances already cover the claimed amount
+							or (flt(self.grand_total, precision) == 0)
+						)
 					)
-					# grand total (to be paid) is 0 since linked advances already cover the claimed amount
-					or (flt(self.grand_total, precision) == 0)
-				)
-			)
-		) and self.approval_status == "Approved":
-			status = "Paid"
-		elif (
-			flt(self.total_sanctioned_amount) > 0
-			and self.docstatus == 1
-			and self.approval_status == "Approved"
-		):
-			status = "Unpaid"
-		elif self.docstatus == 1 and self.approval_status == "Rejected":
-			status = "Rejected"
+				):
+					status = "Paid"
+				elif flt(self.total_sanctioned_amount) > 0:
+					status = "Unpaid"
+			elif self.approval_status == "Rejected":
+				status = "Rejected"
 
 		if update:
 			self.db_set("status", status)
+			self.publish_update()
+			self.notify_update()
 		else:
 			self.status = status
 
+	def validate_company_and_department(self):
+		if self.department:
+			company = frappe.db.get_value("Department", self.department, "company")
+			if company and self.company != company:
+				frappe.throw(
+					_("Department {0} does not belong to company: {1}").format(self.department, self.company),
+					exc=MismatchError,
+				)
+
 	def on_update(self):
 		share_doc_with_approver(self, self.expense_approver)
+		self.publish_update()
+		self.notify_approval_status()
 
-	def set_payable_account(self):
+	def after_delete(self):
+		self.publish_update()
+
+	def before_submit(self):
 		if not self.payable_account and not self.is_paid:
-			self.payable_account = frappe.get_cached_value(
-				"Company", self.company, "default_expense_claim_payable_account"
-			)
+			frappe.throw(_("Payable Account is mandatory to submit an Expense Claim"))
 
-	def set_cost_center(self):
-		if not self.cost_center:
-			self.cost_center = frappe.get_cached_value("Company", self.company, "cost_center")
+	def publish_update(self):
+		employee_user = frappe.db.get_value("Employee", self.employee, "user_id", cache=True)
+		hrms.refetch_resource("hrms:my_claims", employee_user)
 
 	def on_submit(self):
 		if self.approval_status == "Draft":
@@ -104,6 +124,11 @@ class ExpenseClaim(AccountsController):
 
 		self.update_claimed_amount_in_employee_advance()
 
+	def on_update_after_submit(self):
+		if self.check_if_fields_updated([], {"taxes": ("account_head")}):
+			validate_docs_for_voucher_types(["Expense Claim"])
+			self.repost_accounting_entries()
+
 	def on_cancel(self):
 		self.update_task_and_project()
 		self.ignore_linked_doctypes = ("GL Entry", "Stock Ledger Entry", "Payment Ledger Entry")
@@ -113,6 +138,7 @@ class ExpenseClaim(AccountsController):
 		update_reimbursed_amount(self)
 
 		self.update_claimed_amount_in_employee_advance()
+		self.publish_update()
 
 	def update_claimed_amount_in_employee_advance(self):
 		for d in self.get("advances"):
@@ -257,7 +283,7 @@ class ExpenseClaim(AccountsController):
 			if not data.cost_center:
 				frappe.throw(
 					_("Row {0}: {1} is required in the expenses table to book an expense claim.").format(
-						data.idx, frappe.bold("Cost Center")
+						data.idx, frappe.bold(_("Cost Center"))
 					)
 				)
 
@@ -288,7 +314,7 @@ class ExpenseClaim(AccountsController):
 
 			if tax.rate:
 				tax.tax_amount = flt(
-					flt(self.total_sanctioned_amount) * flt(tax.rate / 100),
+					flt(self.total_sanctioned_amount) * flt(flt(tax.rate) / 100),
 					tax.precision("tax_amount"),
 				)
 
@@ -313,7 +339,7 @@ class ExpenseClaim(AccountsController):
 			ref_doc = frappe.db.get_value(
 				"Employee Advance",
 				d.employee_advance,
-				["posting_date", "paid_amount", "claimed_amount", "advance_account"],
+				["posting_date", "paid_amount", "claimed_amount", "return_amount", "advance_account"],
 				as_dict=1,
 			)
 			d.posting_date = ref_doc.posting_date
@@ -321,7 +347,9 @@ class ExpenseClaim(AccountsController):
 			d.advance_paid = ref_doc.paid_amount
 			d.unclaimed_amount = flt(ref_doc.paid_amount) - flt(ref_doc.claimed_amount)
 
-			if d.allocated_amount and flt(d.allocated_amount) > flt(d.unclaimed_amount):
+			if d.allocated_amount and flt(d.allocated_amount) > (
+				flt(d.unclaimed_amount) - flt(d.return_amount)
+			):
 				frappe.throw(
 					_("Row {0}# Allocated amount {1} cannot be greater than unclaimed amount {2}").format(
 						d.idx, d.allocated_amount, d.unclaimed_amount
@@ -384,6 +412,8 @@ def get_total_reimbursed_amount(doc):
 
 
 def get_outstanding_amount_for_claim(claim):
+	precision = frappe.get_precision("Expense Claim", "grand_total")
+
 	if isinstance(claim, str):
 		claim = frappe.db.get_value(
 			"Expense Claim",
@@ -404,7 +434,7 @@ def get_outstanding_amount_for_claim(claim):
 		- flt(claim.total_advance_amount)
 	)
 
-	return outstanding_amt
+	return flt(outstanding_amt, precision)
 
 
 @frappe.whitelist()
@@ -467,7 +497,8 @@ def get_expense_claim_account(expense_claim_type, company):
 	if not account:
 		frappe.throw(
 			_("Set the default account for the {0} {1}").format(
-				frappe.bold("Expense Claim Type"), get_link_to_form("Expense Claim Type", expense_claim_type)
+				frappe.bold(_("Expense Claim Type")),
+				get_link_to_form("Expense Claim Type", expense_claim_type),
 			)
 		)
 
@@ -480,9 +511,11 @@ def get_advances(employee, advance_id=None):
 
 	query = frappe.qb.from_(advance).select(
 		advance.name,
+		advance.purpose,
 		advance.posting_date,
 		advance.paid_amount,
 		advance.claimed_amount,
+		advance.return_amount,
 		advance.advance_account,
 	)
 
@@ -501,7 +534,7 @@ def get_advances(employee, advance_id=None):
 
 @frappe.whitelist()
 def get_expense_claim(
-	employee_name, company, employee_advance_name, posting_date, paid_amount, claimed_amount
+	employee_name, company, employee_advance_name, posting_date, paid_amount, claimed_amount, return_amount
 ):
 	default_payable_account = frappe.get_cached_value(
 		"Company", company, "default_expense_claim_payable_account"
@@ -521,7 +554,10 @@ def get_expense_claim(
 			"posting_date": posting_date,
 			"advance_paid": flt(paid_amount),
 			"unclaimed_amount": flt(paid_amount) - flt(claimed_amount),
-			"allocated_amount": flt(paid_amount) - flt(claimed_amount),
+			"allocated_amount": get_allocation_amount(
+				paid_amount=(paid_amount), claimed_amount=(claimed_amount), return_amount=(return_amount)
+			),
+			"return_amount": flt(return_amount),
 		},
 	)
 
@@ -542,10 +578,17 @@ def update_payment_for_expense_claim(doc, method=None):
 	for d in doc.get(payment_table):
 		if d.get(doctype_field) == "Expense Claim" and d.reference_name:
 			expense_claim = frappe.get_doc("Expense Claim", d.reference_name)
-			if doc.docstatus == 2:
-				update_reimbursed_amount(expense_claim)
-			else:
-				update_reimbursed_amount(expense_claim)
+			update_reimbursed_amount(expense_claim)
+
+			if doc.doctype == "Payment Entry":
+				update_outstanding_amount_in_payment_entry(expense_claim, d.name)
+
+
+def update_outstanding_amount_in_payment_entry(expense_claim: dict, pe_reference: str):
+	"""updates outstanding amount back in Payment Entry reference"""
+	# TODO: refactor convoluted code after erpnext payment entry becomes extensible
+	outstanding_amount = get_outstanding_amount_for_claim(expense_claim)
+	frappe.db.set_value("Payment Entry Reference", pe_reference, "outstanding_amount", outstanding_amount)
 
 
 def validate_expense_claim_in_jv(doc, method=None):
@@ -571,3 +614,13 @@ def make_expense_claim_for_delivery_trip(source_name, target_doc=None):
 	)
 
 	return doc
+
+
+@frappe.whitelist()
+def get_allocation_amount(paid_amount=None, claimed_amount=None, return_amount=None, unclaimed_amount=None):
+	if unclaimed_amount is not None and return_amount is not None:
+		return flt(unclaimed_amount) - flt(return_amount)
+	elif paid_amount is not None and claimed_amount is not None and return_amount is not None:
+		return flt(paid_amount) - (flt(claimed_amount) + flt(return_amount))
+	else:
+		frappe.throw(_("Invalid parameters provided. Please pass the required arguments."))

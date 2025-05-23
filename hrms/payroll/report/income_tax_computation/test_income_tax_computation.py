@@ -41,9 +41,7 @@ class TestIncomeTaxComputation(FrappeTestCase):
 			date_of_joining=getdate("01-10-2021"),
 		)
 
-		self.payroll_period = create_payroll_period(
-			name="_Test Payroll Period 1", company="_Test Company"
-		)
+		self.payroll_period = create_payroll_period(name="_Test Payroll Period 1", company="_Test Company")
 
 		self.income_tax_slab = create_tax_slab(
 			self.payroll_period,
@@ -83,14 +81,14 @@ class TestIncomeTaxComputation(FrappeTestCase):
 			"employee_name": "employee_tax_computation@example.com",
 			"department": "All Departments",
 			"income_tax_slab": self.income_tax_slab,
-			"ctc": 936000.0,
+			"gross_earnings": 936000.0,
 			"professional_tax": 2400.0,
 			"standard_tax_exemption": 50000,
 			"total_exemption": 52400.0,
-			"total_taxable_amount": 883600.0,
-			"applicable_tax": 92789.0,
+			"total_taxable_amount": 881200.0,
+			"applicable_tax": 92290.0,
 			"total_tax_deducted": 17997.0,
-			"payable_tax": 74792,
+			"payable_tax": 74293.0,
 		}
 
 		for key, val in expected_data.items():
@@ -105,9 +103,9 @@ class TestIncomeTaxComputation(FrappeTestCase):
 			{
 				"_test_category": 100000.0,
 				"total_exemption": 152400.0,
-				"total_taxable_amount": 783600.0,
-				"applicable_tax": 71989.0,
-				"payable_tax": 53992.0,
+				"total_taxable_amount": 781200.0,
+				"applicable_tax": 71490.0,
+				"payable_tax": 53493.0,
 			}
 		)
 

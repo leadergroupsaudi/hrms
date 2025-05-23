@@ -10,6 +10,7 @@
   "section_break_6",
   "employee",
   "employee_name",
+  "company",
   "department",
   "designation",
   "branch",
@@ -18,7 +19,8 @@
   "letter_head",
   "column_break_18",
   "status",
-  "company",
+  "salary_withholding",
+  "salary_withholding_cycle",
   "currency",
   "exchange_rate",
   "section_break_gsts",
@@ -50,7 +52,7 @@
   "total_working_hours",
   "hour_rate",
   "base_hour_rate",
-  "earning_deduction",
+  "earning_deduction_sb",
   "earnings",
   "column_break_k1jz",
   "deductions",
@@ -170,7 +172,7 @@
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "Draft\nSubmitted\nCancelled",
+   "options": "Draft\nSubmitted\nCancelled\nWithheld",
    "read_only": 1
   },
   {
@@ -195,7 +197,6 @@
    "in_standard_filter": 1,
    "label": "Company",
    "options": "Company",
-   "remember_last_selected_value": 1,
    "reqd": 1
   },
   {
@@ -275,7 +276,6 @@
    "options": "Salary Slip Timesheet"
   },
   {
-   "fetch_from": "timesheet.total_hours",
    "fieldname": "total_working_hours",
    "fieldtype": "Float",
    "label": "Total Working Hours",
@@ -309,11 +309,6 @@
    "fieldname": "deduct_tax_for_unsubmitted_tax_exemption_proof",
    "fieldtype": "Check",
    "label": "Deduct Tax For Unsubmitted Tax Exemption Proof"
-  },
-  {
-   "fieldname": "earning_deduction",
-   "fieldtype": "Section Break",
-   "oldfieldtype": "Section Break"
   },
   {
    "fieldname": "earnings",
@@ -550,11 +545,13 @@
   },
   {
    "fieldname": "section_break_6",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Employee Info"
   },
   {
    "fieldname": "section_break_gsts",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Payroll Info"
   },
   {
    "fieldname": "column_break_obdl",
@@ -709,7 +706,8 @@
   {
    "depends_on": "eval:doc.salary_slip_based_on_timesheet",
    "fieldname": "timesheets_section",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Timesheet Details"
   },
   {
    "fieldname": "help_section",
@@ -719,13 +717,36 @@
    "fieldname": "payment_days_calculation_help",
    "fieldtype": "HTML",
    "label": "Payment Days Calculation Help"
+  },
+  {
+   "fieldname": "earning_deduction_sb",
+   "fieldtype": "Section Break",
+   "oldfieldtype": "Section Break"
+  },
+  {
+   "fieldname": "salary_withholding",
+   "fieldtype": "Link",
+   "label": "Salary Withholding",
+   "no_copy": 1,
+   "options": "Salary Withholding",
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "salary_withholding_cycle",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Salary Withholding Cycle",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
   }
  ],
  "icon": "fa fa-file-text",
  "idx": 9,
  "is_submittable": 1,
  "links": [],
- "modified": "2023-09-25 19:31:53.460393",
+ "modified": "2024-07-01 21:25:36.651583",
  "modified_by": "Administrator",
  "module": "Payroll",
  "name": "Salary Slip",
@@ -757,6 +778,7 @@
    "write": 1
   },
   {
+   "print": 1,
    "read": 1,
    "role": "Employee"
   }
@@ -765,7 +787,24 @@
  "show_name_in_global_search": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": [],
+ "states": [
+  {
+   "color": "Red",
+   "title": "Draft"
+  },
+  {
+   "color": "Blue",
+   "title": "Submitted"
+  },
+  {
+   "color": "Gray",
+   "title": "Cancelled"
+  },
+  {
+   "color": "Yellow",
+   "title": "Withheld"
+  }
+ ],
  "timeline_field": "employee",
  "title_field": "employee_name"
 }

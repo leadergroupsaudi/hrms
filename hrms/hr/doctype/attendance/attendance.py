@@ -17,7 +17,11 @@ from frappe.utils import (
 )
 
 from hrms.hr.doctype.shift_assignment.shift_assignment import has_overlapping_timings
-from hrms.hr.utils import get_holiday_dates_for_employee, validate_active_employee
+from hrms.hr.utils import (
+	get_holiday_dates_for_employee,
+	get_holidays_for_employee,
+	validate_active_employee,
+)
 
 
 class DuplicateAttendanceError(frappe.ValidationError):
@@ -29,6 +33,10 @@ class OverlappingShiftAttendanceError(frappe.ValidationError):
 
 
 class Attendance(Document):
+	def before_insert(self):
+		if self.half_day_status == "":
+			self.half_day_status = None
+
 	def validate(self):
 		from erpnext.controllers.status_updater import validate_status
 
@@ -46,18 +54,7 @@ class Attendance(Document):
 	def validate_attendance_date(self):
 		date_of_joining = frappe.db.get_value("Employee", self.employee, "date_of_joining")
 
-		# leaves can be marked for future dates
-		if (
-			self.status != "On Leave"
-			and not self.leave_application
-			and getdate(self.attendance_date) > getdate(nowdate())
-		):
-			frappe.throw(
-				_("Attendance can not be marked for future dates: {0}").format(
-					frappe.bold(format_date(self.attendance_date)),
-				)
-			)
-		elif date_of_joining and getdate(self.attendance_date) < getdate(date_of_joining):
+		if date_of_joining and getdate(self.attendance_date) < getdate(date_of_joining):
 			frappe.throw(
 				_("Attendance date {0} can not be less than employee {1}'s joining date: {2}").format(
 					frappe.bold(format_date(self.attendance_date)),
@@ -90,14 +87,17 @@ class Attendance(Document):
 				& (Attendance.docstatus < 2)
 				& (Attendance.attendance_date == self.attendance_date)
 				& (Attendance.name != self.name)
+				& (Attendance.half_day_status.isnull() | (Attendance.half_day_status == ""))
 			)
+			.for_update()
 		)
 
 		if self.shift:
 			query = query.where(
 				((Attendance.shift.isnull()) | (Attendance.shift == ""))
 				| (
-					((Attendance.shift.isnotnull()) | (Attendance.shift != "")) & (Attendance.shift == self.shift)
+					((Attendance.shift.isnotnull()) | (Attendance.shift != ""))
+					& (Attendance.shift == self.shift)
 				)
 			)
 
@@ -136,8 +136,10 @@ class Attendance(Document):
 			)
 		).run(as_dict=True)
 
-		if same_date_attendance and has_overlapping_timings(self.shift, same_date_attendance[0].shift):
-			return same_date_attendance[0]
+		for d in same_date_attendance:
+			if has_overlapping_timings(self.shift, d.shift):
+				return d
+
 		return {}
 
 	def validate_employee_status(self):
@@ -145,30 +147,41 @@ class Attendance(Document):
 			frappe.throw(_("Cannot mark attendance for an Inactive employee {0}").format(self.employee))
 
 	def check_leave_record(self):
-		leave_record = frappe.db.sql(
-			"""
-			select leave_type, half_day, half_day_date
-			from `tabLeave Application`
-			where employee = %s
-				and %s between from_date and to_date
-				and status = 'Approved'
-				and docstatus = 1
-		""",
-			(self.employee, self.attendance_date),
-			as_dict=True,
-		)
+		LeaveApplication = frappe.qb.DocType("Leave Application")
+		leave_record = (
+			frappe.qb.from_(LeaveApplication)
+			.select(
+				LeaveApplication.leave_type,
+				LeaveApplication.half_day,
+				LeaveApplication.half_day_date,
+				LeaveApplication.name,
+			)
+			.where(
+				(LeaveApplication.employee == self.employee)
+				& (self.attendance_date >= LeaveApplication.from_date)
+				& (self.attendance_date <= LeaveApplication.to_date)
+				& (LeaveApplication.status == "Approved")
+				& (LeaveApplication.docstatus == 1)
+			)
+		).run(as_dict=True)
+
 		if leave_record:
 			for d in leave_record:
 				self.leave_type = d.leave_type
+				self.leave_application = d.name
 				if d.half_day_date == getdate(self.attendance_date):
 					self.status = "Half Day"
 					frappe.msgprint(
-						_("Employee {0} on Half day on {1}").format(self.employee, format_date(self.attendance_date))
+						_("Employee {0} on Half day on {1}").format(
+							self.employee, format_date(self.attendance_date)
+						)
 					)
 				else:
 					self.status = "On Leave"
 					frappe.msgprint(
-						_("Employee {0} is on Leave on {1}").format(self.employee, format_date(self.attendance_date))
+						_("Employee {0} is on Leave on {1}").format(
+							self.employee, format_date(self.attendance_date)
+						)
 					)
 
 		if self.status in ("On Leave", "Half Day"):
@@ -220,39 +233,56 @@ class Attendance(Document):
 
 @frappe.whitelist()
 def get_events(start, end, filters=None):
-	events = []
-
 	employee = frappe.db.get_value("Employee", {"user_id": frappe.session.user})
-
 	if not employee:
-		return events
+		return []
+	if isinstance(filters, str):
+		import json
 
-	from frappe.desk.reportview import get_filters_cond
+		filters = json.loads(filters)
+	if not filters:
+		filters = []
+	filters.append(["attendance_date", "between", [get_datetime(start).date(), get_datetime(end).date()]])
+	attendance_records = add_attendance(filters)
+	add_holidays(attendance_records, start, end, employee)
+	return attendance_records
 
-	conditions = get_filters_cond("Attendance", filters, [])
-	add_attendance(events, start, end, conditions=conditions)
-	return events
+
+def add_attendance(filters):
+	attendance = frappe.get_list(
+		"Attendance",
+		fields=[
+			"name",
+			"'Attendance' as doctype",
+			"attendance_date as start",
+			"attendance_date as end",
+			"employee_name",
+			"status",
+			"docstatus",
+		],
+		filters=filters,
+	)
+	for record in attendance:
+		record["title"] = f"{record.employee_name} : {record.status}"
+	return attendance
 
 
-def add_attendance(events, start, end, conditions=None):
-	query = """select name, attendance_date, status
-		from `tabAttendance` where
-		attendance_date between %(from_date)s and %(to_date)s
-		and docstatus < 2"""
-	if conditions:
-		query += conditions
+def add_holidays(events, start, end, employee=None):
+	holidays = get_holidays_for_employee(employee, start, end)
+	if not holidays:
+		return
 
-	for d in frappe.db.sql(query, {"from_date": start, "to_date": end}, as_dict=True):
-		e = {
-			"name": d.name,
-			"doctype": "Attendance",
-			"start": d.attendance_date,
-			"end": d.attendance_date,
-			"title": cstr(d.status),
-			"docstatus": d.docstatus,
-		}
-		if e not in events:
-			events.append(e)
+	for holiday in holidays:
+		events.append(
+			{
+				"doctype": "Holiday",
+				"start": holiday.holiday_date,
+				"end": holiday.holiday_date,
+				"title": _("Holiday") + ": " + cstr(holiday.description),
+				"name": holiday.name,
+				"allDay": 1,
+			}
+		)
 
 
 def mark_attendance(
@@ -263,6 +293,7 @@ def mark_attendance(
 	leave_type=None,
 	late_entry=False,
 	early_exit=False,
+	half_day_status=None,
 ):
 	savepoint = "attendance_creation"
 
@@ -279,6 +310,7 @@ def mark_attendance(
 				"leave_type": leave_type,
 				"late_entry": late_entry,
 				"early_exit": early_exit,
+				"half_day_status": half_day_status,
 			}
 		)
 		attendance.insert()
@@ -307,6 +339,7 @@ def mark_bulk_attendance(data):
 			"employee": data.employee,
 			"attendance_date": get_datetime(date),
 			"status": data.status,
+			"half_day_status": "Absent" if data.status == "Half Day" else None,
 		}
 		attendance = frappe.get_doc(doc_dict).insert()
 		attendance.submit()

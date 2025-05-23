@@ -48,6 +48,9 @@
    "search_index": 1
   },
   {
+   "allow_on_submit": 1,
+   "fetch_from": "company.default_letter_head",
+   "fetch_if_empty": 1,
    "fieldname": "letter_head",
    "fieldtype": "Link",
    "label": "Letter Head",
@@ -239,7 +242,7 @@
  "idx": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2023-09-26 14:57:07.030623",
+ "modified": "2024-11-22 11:17:28.384386",
  "modified_by": "Administrator",
  "module": "Payroll",
  "name": "Salary Structure",
@@ -280,5 +283,6 @@
  "show_name_in_global_search": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1
 }

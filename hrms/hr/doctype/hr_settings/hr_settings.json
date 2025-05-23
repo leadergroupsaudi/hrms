@@ -26,23 +26,33 @@
   "leave_status_notification_template",
   "leave_approver_mandatory_in_leave_application",
   "restrict_backdated_leave_application",
+  "prevent_self_leave_approval",
   "role_allowed_to_create_backdated_leave_application",
   "column_break_29",
   "expense_approver_mandatory_in_expense_claim",
   "show_leaves_of_all_department_members_in_calendar",
   "auto_leave_encashment",
+  "shift_settings_section",
+  "allow_multiple_shift_assignments",
   "hiring_settings_section",
   "check_vacancies",
   "send_interview_reminder",
   "interview_reminder_template",
   "remind_before",
-  "column_break_4",
   "send_interview_feedback_reminder",
   "feedback_reminder_notification_template",
+  "column_break_4",
+  "hiring_sender",
+  "hiring_sender_email",
   "employee_exit_section",
   "exit_questionnaire_web_form",
   "column_break_34",
-  "exit_questionnaire_notification_template"
+  "exit_questionnaire_notification_template",
+  "attendance_settings_section",
+  "allow_employee_checkin_from_mobile_app",
+  "allow_geolocation_tracking",
+  "unlink_payment_section",
+  "unlink_payment_on_cancellation_of_employee_advance"
  ],
  "fields": [
   {
@@ -267,13 +277,72 @@
   {
    "fieldname": "column_break_hyec",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "hiring_sender",
+   "fieldtype": "Link",
+   "label": "Sender",
+   "options": "Email Account"
+  },
+  {
+   "depends_on": "eval:doc.hiring_sender",
+   "fetch_from": "hiring_sender.email_id",
+   "fieldname": "hiring_sender_email",
+   "fieldtype": "Data",
+   "label": "Sender Email",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_multiple_shift_assignments",
+   "fieldtype": "Check",
+   "label": "Allow Multiple Shift Assignments for Same Date"
+  },
+  {
+   "fieldname": "shift_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Shift Settings"
+  },
+  {
+   "default": "1",
+   "fieldname": "allow_employee_checkin_from_mobile_app",
+   "fieldtype": "Check",
+   "label": "Allow Employee Checkin from Mobile App"
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_geolocation_tracking",
+   "fieldtype": "Check",
+   "label": "Allow Geolocation Tracking"
+  },
+  {
+   "fieldname": "attendance_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Attendance Settings"
+  },
+  {
+   "fieldname": "unlink_payment_section",
+   "fieldtype": "Section Break",
+   "label": "Unlink Payment"
+  },
+  {
+   "default": "0",
+   "fieldname": "unlink_payment_on_cancellation_of_employee_advance",
+   "fieldtype": "Check",
+   "label": " Unlink Payment on Cancellation of Employee Advance"
+  },
+  {
+   "default": "0",
+   "fieldname": "prevent_self_leave_approval",
+   "fieldtype": "Check",
+   "label": "Prevent self approval for leaves even if user has permissions"
   }
  ],
  "icon": "fa fa-cog",
  "idx": 1,
  "issingle": 1,
  "links": [],
- "modified": "2023-11-01 11:06:31.329718",
+ "modified": "2025-01-30 12:41:22.594071",
  "modified_by": "Administrator",
  "module": "HR",
  "name": "HR Settings",
@@ -287,6 +356,25 @@
    "role": "System Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR User",
+   "share": 1
+  },
+  {
+   "read": 1,
+   "role": "Employee"
   }
  ],
  "sort_field": "modified",
